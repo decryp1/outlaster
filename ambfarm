@@ -1,35 +1,41 @@
+local hhttp = game:GetService("HttpService")
+local configger = "amberfarm/config.json"
+local cyclefile = "amberfarm/cycles.txt"
 if not isfolder("amberfarm") then makefolder("amberfarm") end
+local defaults = {
+    speed = _G.farmspeed or 124,
+    height = _G.farmheightoffset or 10,
+    alwaysunderground = _G.alwaysunderground or false,
+    undergroundifnoambers = _G.undergroundifnoambers or true,
+    farmcycles = _G.farmcycles or 999999
+}
 
-local cnonfig = "amberfarm/config.json"
-if _G.farmspeed or _G.farmheightoffset or _G.alwaysunderground or _G.undergroundifnoambers or _G.farmcycles then
-    writefile(cnonfig, game:GetService("HttpService"):JSONEncode({
-        speed = _G.farmspeed or 124,
-        height = _G.farmheightoffset or 10,
-        alwaysunderground = _G.alwaysunderground or false,
-        undergroundifnoambers = _G.undergroundifnoambers or true,
-        farmcycles = _G.farmcycles or 999999
-    }))
+if not isfile(configger) then
+    writefile(configger, hhttp:JSONEncode(defaults))
 end
 
-local settings = {}
-if isfile(cnonfig) then
-    settings = game:GetService("HttpService"):JSONDecode(readfile(cnonfig))
-end
+local config = hhttp:JSONDecode(readfile(configger))
+_G.farmspeed = config.speed
+_G.farmheightoffset = config.height
+_G.alwaysunderground = config.alwaysunderground
+_G.undergroundifnoambers = config.undergroundifnoambers
+_G.farmcycles = config.farmcycles
 
-local farmspeed = _G.farmspeed or settings.speed or 124
-local farmheightoffset = _G.farmheightoffset or settings.height or 10
-local alwaysunderground = _G.alwaysunderground or settings.alwaysunderground or false
-local undergroundifnoambers = _G.undergroundifnoambers or settings.undergroundifnoambers or true
-local farmcycles = _G.farmcycles or settings.farmcycles or 999999
+writefile(configger, hhttp:JSONEncode({
+    speed = _G.farmspeed,
+    height = _G.farmheightoffset,
+    alwaysunderground = _G.alwaysunderground,
+    undergroundifnoambers = _G.undergroundifnoambers,
+    farmcycles = _G.farmcycles
+}))
 
-local path = "amberfarm/cycles.txt"
 local cycles = 0
-if isfile(path) then
-    cycles = tonumber(readfile(path)) or 0
+if isfile(cyclefile) then
+    cycles = tonumber(readfile(cyclefile)) or 0
 end
 cycles += 1
-writefile(path, tostring(cycles))
-if cycles > farmcycles then return end
+writefile(cyclefile, tostring(cycles))
+if cycles > _G.farmcycles then return end
 
 local lp = game.Players.LocalPlayer
 local char = lp.Character or lp.CharacterAdded:Wait()
@@ -40,24 +46,51 @@ bv.Velocity = Vector3.zero
 bv.Parent = hrp
 
 game:GetService("RunService").Stepped:Connect(function()
-    for _,part in ipairs(char:GetDescendants()) do
-        if part:IsA("BasePart") and part.CanCollide then
+    for _, part in ipairs(char:GetDescendants()) do
+        if part:IsA("BasePart") then
             part.CanCollide = false
         end
     end
 end)
 
+local function serverhop()
+    while true do
+        local success, response = pcall(function()
+            return hhttp:JSONDecode(game:HttpGet(
+                "https://games.roblox.com/v1/games/" .. game.PlaceId .. "/servers/Public?sortOrder=Desc&limit=100&excludeFullGames=true"
+            ))
+        end)
+        if success and response and response.data then
+            local servers = {}
+            for _, v in ipairs(response.data) do
+                if tonumber(v.playing) and tonumber(v.maxPlayers) and v.playing < v.maxPlayers and v.id ~= game.JobId then
+                    table.insert(servers, v.id)
+                end
+            end
+            if #servers > 0 then
+                game:GetService("TeleportService"):TeleportToPlaceInstance(game.PlaceId, servers[math.random(1, #servers)], lp)
+                break
+            else
+                print("no servers found, retrying")
+            end
+        else
+        end
+        task.wait(1)
+    end
+end
+
 local function getclosest()
-    local ambers = workspace.ItemSpawn and workspace.ItemSpawn.Amber
+    local ambers = workspace:FindFirstChild("ItemSpawn") and workspace.ItemSpawn:FindFirstChild("Amber")
     local best, dist = nil, math.huge
-    for _,v in ambers:GetChildren() do
+    if not ambers then return nil end
+    for _, v in ipairs(ambers:GetChildren()) do
         if v:IsA("BasePart") then
             local m = v:FindFirstChildOfClass("Model")
             local p = m and m:FindFirstChildOfClass("ProximityPrompt")
             if p then
                 local d = (v.Position - hrp.Position).Magnitude
                 if d < dist then
-                    best, dist = {v=v, p=p}, d
+                    best, dist = {v = v, p = p}, d
                 end
             end
         end
@@ -66,8 +99,9 @@ local function getclosest()
 end
 
 local function promptsleft()
-    local ambers = workspace.ItemSpawn and workspace.ItemSpawn.Amber
-    for _,v in ambers:GetChildren() do
+    local ambers = workspace:FindFirstChild("ItemSpawn") and workspace.ItemSpawn:FindFirstChild("Amber")
+    if not ambers then return false end
+    for _, v in ipairs(ambers:GetChildren()) do
         if v:IsA("BasePart") then
             local m = v:FindFirstChildOfClass("Model")
             if m and m:FindFirstChildOfClass("ProximityPrompt") then
@@ -82,16 +116,16 @@ task.spawn(function()
     while true do
         if not promptsleft() then
             queue_on_teleport([[wait(2) local args = {"Gallimimus"} game:GetService("ReplicatedStorage"):WaitForChild("shared/network/init@GlobalEvents"):WaitForChild("spawn"):FireServer(unpack(args)) if not game:IsLoaded() then game.Loaded:Wait() end repeat wait() until game.Players.LocalPlayer.Character and game.Players.LocalPlayer.Character:FindFirstChild("HumanoidRootPart") loadstring(game:HttpGet("https://raw.githubusercontent.com/decryp1/outlaster/refs/heads/main/ambfarm"))()]])
-            game:GetService("TeleportService"):Teleport(game.PlaceId)
+            serverhop()
             break
         end
         local closest = getclosest()
         if not closest then
-            if undergroundifnoambers then
+            if _G.undergroundifnoambers then
                 local idletarget = hrp.Position - Vector3.new(0, 30, 0)
                 repeat
                     local dir = (idletarget - hrp.Position)
-                    bv.Velocity = dir.Magnitude > 1 and dir.Unit * farmspeed or Vector3.zero
+                    bv.Velocity = dir.Magnitude > 1 and dir.Unit * _G.farmspeed or Vector3.zero
                     closest = getclosest()
                     task.wait()
                 until closest
@@ -100,20 +134,20 @@ task.spawn(function()
                 task.wait()
             end
         else
-            local height = alwaysunderground and 50 or farmheightoffset
+            local height = _G.alwaysunderground and 50 or _G.farmheightoffset
             local yoff = Vector3.new(0, hrp.Size.Y, 0)
             local pos = closest.v.Position
             local target = Vector3.new(pos.X, pos.Y - height, pos.Z) - yoff
             repeat
                 local dir = (target - hrp.Position)
-                bv.Velocity = dir.Magnitude > 1 and dir.Unit * farmspeed or Vector3.zero
+                bv.Velocity = dir.Magnitude > 1 and dir.Unit * _G.farmspeed or Vector3.zero
                 task.wait()
             until (hrp.Position - pos).Magnitude <= 38 or not closest.v or not closest.v.Parent
-            if alwaysunderground then
+            if _G.alwaysunderground then
                 local uptarget = Vector3.new(pos.X, pos.Y - 38, pos.Z) - yoff
                 repeat
                     local dir = (uptarget - hrp.Position)
-                    bv.Velocity = dir.Magnitude > 1 and dir.Unit * farmspeed or Vector3.zero
+                    bv.Velocity = dir.Magnitude > 1 and dir.Unit * _G.farmspeed or Vector3.zero
                     task.wait()
                 until dir.Magnitude <= 1
             end
