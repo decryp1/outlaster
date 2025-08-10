@@ -1,6 +1,7 @@
-local hhttp = game:GetService("HttpService")
-local configger = "amberfarm/config.json"
-local cyclefile = "amberfarm/cycles.txt"
+local h = game:GetService("HttpService")
+local configf = "amberfarm/config.json"
+local cyclef = "amberfarm/cycles.txt"
+local togglef = "amberfarm/toggle.txt"
 if not isfolder("amberfarm") then makefolder("amberfarm") end
 local defaults = {
     speed = _G.farmspeed or 124,
@@ -9,34 +10,39 @@ local defaults = {
     undergroundifnoambers = _G.undergroundifnoambers or true,
     farmcycles = _G.farmcycles or 999999
 }
-
-if not isfile(configger) then
-    writefile(configger, hhttp:JSONEncode(defaults))
+if not isfile(configf) then
+    writefile(configf, h:JSONEncode(defaults))
 end
-
-local config = hhttp:JSONDecode(readfile(configger))
-_G.farmspeed = config.speed
-_G.farmheightoffset = config.height
-_G.alwaysunderground = config.alwaysunderground
-_G.undergroundifnoambers = config.undergroundifnoambers
-_G.farmcycles = config.farmcycles
-
-writefile(configger, hhttp:JSONEncode({
+local cfg = h:JSONDecode(readfile(configf))
+_G.farmspeed = cfg.speed
+_G.farmheightoffset = cfg.height
+_G.alwaysunderground = cfg.alwaysunderground
+_G.undergroundifnoambers = cfg.undergroundifnoambers
+_G.farmcycles = cfg.farmcycles
+writefile(configf, h:JSONEncode({
     speed = _G.farmspeed,
     height = _G.farmheightoffset,
     alwaysunderground = _G.alwaysunderground,
     undergroundifnoambers = _G.undergroundifnoambers,
     farmcycles = _G.farmcycles
 }))
-
-local cycles = 0
-if isfile(cyclefile) then
-    cycles = tonumber(readfile(cyclefile)) or 0
+if not isfile(togglef) then writefile(togglef,"true") end
+if not isfile(cyclef) then writefile(cyclef,"0") end
+local toggle = readfile(togglef)
+local cycles = tonumber(readfile(cyclef)) or 0
+if toggle == "true" then
+    cycles = 0
+    writefile(cyclef,"0")
 end
 cycles += 1
-writefile(cyclefile, tostring(cycles))
-if cycles > _G.farmcycles then return end
-
+writefile(cyclef,tostring(cycles))
+if cycles > _G.farmcycles then
+    writefile(cyclef,"0")
+    writefile(togglef,"true")
+    return
+else
+    writefile(togglef,"true")
+end
 local lp = game.Players.LocalPlayer
 local char = lp.Character or lp.CharacterAdded:Wait()
 local hrp = char:WaitForChild("HumanoidRootPart")
@@ -44,64 +50,54 @@ local bv = Instance.new("BodyVelocity")
 bv.MaxForce = Vector3.new(9e9, 9e9, 9e9)
 bv.Velocity = Vector3.zero
 bv.Parent = hrp
-
 game:GetService("RunService").Stepped:Connect(function()
-    for _, part in ipairs(char:GetDescendants()) do
-        if part:IsA("BasePart") then
-            part.CanCollide = false
-        end
+    for _,v in ipairs(char:GetDescendants()) do
+        if v:IsA("BasePart") then v.CanCollide = false end
     end
 end)
-
 local function serverhop()
+    writefile(togglef,"false")
     while true do
-        local success, response = pcall(function()
-            return hhttp:JSONDecode(game:HttpGet(
-                "https://games.roblox.com/v1/games/" .. game.PlaceId .. "/servers/Public?sortOrder=Desc&limit=100&excludeFullGames=true"
-            ))
+        local ok,res = pcall(function()
+            return h:JSONDecode(game:HttpGet("https://games.roblox.com/v1/games/"..game.PlaceId.."/servers/Public?sortOrder=Desc&limit=100&excludeFullGames=true"))
         end)
-        if success and response and response.data then
-            local servers = {}
-            for _, v in ipairs(response.data) do
+        if ok and res and res.data then
+            local s = {}
+            for _,v in ipairs(res.data) do
                 if tonumber(v.playing) and tonumber(v.maxPlayers) and v.playing < v.maxPlayers and v.id ~= game.JobId then
-                    table.insert(servers, v.id)
+                    table.insert(s,v.id)
                 end
             end
-            if #servers > 0 then
-                game:GetService("TeleportService"):TeleportToPlaceInstance(game.PlaceId, servers[math.random(1, #servers)], lp)
+            if #s > 0 then
+                game:GetService("TeleportService"):TeleportToPlaceInstance(game.PlaceId, s[math.random(1,#s)], lp)
                 break
-            else
-                print("no servers found, retrying")
             end
-        else
         end
         task.wait(1)
     end
 end
-
 local function getclosest()
-    local ambers = workspace:FindFirstChild("ItemSpawn") and workspace.ItemSpawn:FindFirstChild("Amber")
-    local best, dist = nil, math.huge
-    if not ambers then return nil end
-    for _, v in ipairs(ambers:GetChildren()) do
+    local amb = workspace:FindFirstChild("ItemSpawn") and workspace.ItemSpawn:FindFirstChild("Amber")
+    local best,dist=nil,math.huge
+    if not amb then return nil end
+    for _,v in ipairs(amb:GetChildren()) do
         if v:IsA("BasePart") then
             local m = v:FindFirstChildOfClass("Model")
             local p = m and m:FindFirstChildOfClass("ProximityPrompt")
             if p then
                 local d = (v.Position - hrp.Position).Magnitude
                 if d < dist then
-                    best, dist = {v = v, p = p}, d
+                    best,dist = {v=v,p=p},d
                 end
             end
         end
     end
     return best
 end
-
 local function promptsleft()
-    local ambers = workspace:FindFirstChild("ItemSpawn") and workspace.ItemSpawn:FindFirstChild("Amber")
-    if not ambers then return false end
-    for _, v in ipairs(ambers:GetChildren()) do
+    local amb = workspace:FindFirstChild("ItemSpawn") and workspace.ItemSpawn:FindFirstChild("Amber")
+    if not amb then return false end
+    for _,v in ipairs(amb:GetChildren()) do
         if v:IsA("BasePart") then
             local m = v:FindFirstChildOfClass("Model")
             if m and m:FindFirstChildOfClass("ProximityPrompt") then
@@ -111,50 +107,49 @@ local function promptsleft()
     end
     return false
 end
-
 task.spawn(function()
     while true do
         if not promptsleft() then
-            queue_on_teleport([[wait(2) local args = {"Gallimimus"} game:GetService("ReplicatedStorage"):WaitForChild("shared/network/init@GlobalEvents"):WaitForChild("spawn"):FireServer(unpack(args)) if not game:IsLoaded() then game.Loaded:Wait() end repeat wait() until game.Players.LocalPlayer.Character and game.Players.LocalPlayer.Character:FindFirstChild("HumanoidRootPart") loadstring(game:HttpGet("https://raw.githubusercontent.com/decryp1/outlaster/refs/heads/main/ambfarm"))()]])
+            queue_on_teleport([[wait(2) local args={"Gallimimus"} game:GetService("ReplicatedStorage"):WaitForChild("shared/network/init@GlobalEvents"):WaitForChild("spawn"):FireServer(unpack(args)) if not game:IsLoaded() then game.Loaded:Wait() end repeat wait() until game.Players.LocalPlayer.Character and game.Players.LocalPlayer.Character:FindFirstChild("HumanoidRootPart") loadstring(game:HttpGet("https://raw.githubusercontent.com/decryp1/outlaster/refs/heads/main/ambfarm"))()]])
             serverhop()
             break
         end
-        local closest = getclosest()
-        if not closest then
+        local c = getclosest()
+        if not c then
             if _G.undergroundifnoambers then
-                local idletarget = hrp.Position - Vector3.new(0, 30, 0)
+                local idle = hrp.Position - Vector3.new(0,30,0)
                 repeat
-                    local dir = (idletarget - hrp.Position)
+                    local dir = (idle - hrp.Position)
                     bv.Velocity = dir.Magnitude > 1 and dir.Unit * _G.farmspeed or Vector3.zero
-                    closest = getclosest()
+                    c = getclosest()
                     task.wait()
-                until closest
+                until c
             else
                 bv.Velocity = Vector3.zero
                 task.wait()
             end
         else
-            local height = _G.alwaysunderground and 50 or _G.farmheightoffset
+            local hgt = _G.alwaysunderground and 50 or _G.farmheightoffset
             local yoff = Vector3.new(0, hrp.Size.Y, 0)
-            local pos = closest.v.Position
-            local target = Vector3.new(pos.X, pos.Y - height, pos.Z) - yoff
+            local pos = c.v.Position
+            local tgt = Vector3.new(pos.X, pos.Y - hgt, pos.Z) - yoff
             repeat
-                local dir = (target - hrp.Position)
+                local dir = (tgt - hrp.Position)
                 bv.Velocity = dir.Magnitude > 1 and dir.Unit * _G.farmspeed or Vector3.zero
                 task.wait()
-            until (hrp.Position - pos).Magnitude <= 38 or not closest.v or not closest.v.Parent
+            until (hrp.Position - pos).Magnitude <= 38 or not c.v or not c.v.Parent
             if _G.alwaysunderground then
-                local uptarget = Vector3.new(pos.X, pos.Y - 38, pos.Z) - yoff
+                local upt = Vector3.new(pos.X, pos.Y - 38, pos.Z) - yoff
                 repeat
-                    local dir = (uptarget - hrp.Position)
+                    local dir = (upt - hrp.Position)
                     bv.Velocity = dir.Magnitude > 1 and dir.Unit * _G.farmspeed or Vector3.zero
                     task.wait()
                 until dir.Magnitude <= 1
             end
             bv.Velocity = Vector3.zero
-            if closest.v and closest.v.Parent then
-                closest.p.HoldDuration = 0
-                fireproximityprompt(closest.p)
+            if c.v and c.v.Parent then
+                c.p.HoldDuration = 0
+                fireproximityprompt(c.p)
             end
             task.wait()
         end
