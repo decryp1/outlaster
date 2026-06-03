@@ -1,5 +1,3 @@
--- This script was generated using the MoonVeil Obfuscator v1.4.5 [https://moonveil.cc]
-
 local Jg=(getfenv())
 local me,rc,J=(string.char),(string.byte),(bit32 .bxor)
 local mb=function(P,bh)
